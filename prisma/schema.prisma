@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DATABASE_MIGRATION_URL")
+}
+
+enum UserRole {
+  ADMIN
+  ORGANIZER
+  COLLABORATOR
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum RegistrationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+enum SeatStatus {
+  AVAILABLE
+  BLOCKED
+}
+
+enum ReservationStatus {
+  HELD
+  CONFIRMED
+  RELEASED
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         UserRole   @default(ORGANIZER)
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
+  collaborations EventCollaborator[]
+  sessions     AuthSession[]
+}
+
+model AuthSession {
+  id        String   @id @db.Uuid
+  tokenHash String   @unique
+  userId    String   @db.Uuid
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model Event {
+  id                  String             @id @default(uuid()) @db.Uuid
+  slug                String             @unique
+  name                String
+  description         String             @db.Text
+  venue               String
+  hallName            String?
+  hallId              String?            @db.Uuid
+  whatsappGroupUrl    String?            @db.VarChar(2048)
+  seatRows            Int?
+  seatColumns         Int?
+  startsAt            DateTime
+  endsAt              DateTime?
+  bannerUrl           String?
+  status              EventStatus        @default(DRAFT)
+  registrationEnabled Boolean            @default(false)
+  reservationMinutes  Int                @default(10)
+  formFields          Json               @default("[]")
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  seats               Seat[]
+  registrations       Registration[]
+  reservations        SeatReservation[]
+  auditLogs           AuditLog[]
+  hall                Hall?              @relation(fields: [hallId], references: [id], onDelete: SetNull)
+  collaborators       EventCollaborator[]
+  satisfactionResponses SatisfactionResponse[]
+  closedAt            DateTime?
+  surveyEmailsSentAt  DateTime?
+
+  @@index([status, startsAt])
+}
+
+model Hall {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  venue      String
+  seatRows   Int
+  seatColumns Int
+  seatLayout Json     @default("[]")
+  photoUrl   String?
+  legacyKey  String?  @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  events     Event[]
+
+  @@index([venue, name])
+}
+
+model Attendee {
+  id             String         @id @default(uuid()) @db.Uuid
+  email          String         @unique
+  firstName      String
+  lastName       String
+  phone          String
+  institution    String?
+  occupation     String
+  age            Int?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  registrations Registration[]
+
+  @@index([lastName, firstName])
+}
+
+model Registration {
+  id               String             @id @default(uuid()) @db.Uuid
+  confirmationCode String             @unique @default(uuid())
+  eventId          String             @db.Uuid
+  attendeeId       String             @db.Uuid
+  status           RegistrationStatus @default(PENDING)
+  referralSource   String?
+  expectations     String?            @db.Text
+  interests        String?            @db.Text
+  perspective      String?            @db.Text
+  comments         String?            @db.Text
+  customAnswers    Json               @default("{}")
+  checkedInAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  event            Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendee         Attendee           @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
+  reservation      SeatReservation?
+  surveyToken      String?            @unique
+  surveySentAt     DateTime?
+  satisfaction     SatisfactionResponse?
+
+  @@unique([eventId, attendeeId])
+  @@index([eventId, status, createdAt])
+}
+
+model EventCollaborator {
+  eventId   String   @db.Uuid
+  userId    String   @db.Uuid
+  createdAt DateTime @default(now())
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, userId])
+  @@index([userId])
+}
+
+model SatisfactionResponse {
+  id             String       @id @default(uuid()) @db.Uuid
+  eventId        String       @db.Uuid
+  registrationId String       @unique @db.Uuid
+  rating         Int
+  recommendation Int
+  highlights     String?      @db.Text
+  improvements   String?      @db.Text
+  createdAt      DateTime     @default(now())
+  event          Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration   Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, createdAt])
+}
+
+model Seat {
+  id           String            @id @default(uuid()) @db.Uuid
+  eventId      String            @db.Uuid
+  rowLabel     String
+  seatLabel    String
+  rowOrder     Int
+  columnOrder  Int
+  status       SeatStatus        @default(AVAILABLE)
+  event        Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  reservations SeatReservation[]
+
+  @@unique([eventId, rowLabel, seatLabel])
+  @@unique([eventId, rowOrder, columnOrder])
+  @@index([eventId, status, rowOrder, columnOrder])
+}
+
+model SeatReservation {
+  id             String            @id @default(uuid()) @db.Uuid
+  eventId        String            @db.Uuid
+  seatId         String            @db.Uuid
+  registrationId String            @unique @db.Uuid
+  status         ReservationStatus @default(HELD)
+  expiresAt      DateTime?
+  confirmedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  event          Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  seat           Seat              @relation(fields: [seatId], references: [id], onDelete: Restrict)
+  registration   Registration      @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  // A unique seat scope prevents simultaneous duplicate assignments.
+  // Expired HELD records must be changed to RELEASED before seat reuse.
+  @@unique([eventId, seatId])
+  @@index([status, expiresAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  eventId   String?  @db.Uuid
+  action    String
+  entity    String
+  entityId  String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, createdAt])
+  @@index([userId, createdAt])
+}

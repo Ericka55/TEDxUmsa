@@ -1,0 +1,2 @@
+ALTER TABLE "Event"
+ADD COLUMN "whatsappGroupUrl" VARCHAR(2048);

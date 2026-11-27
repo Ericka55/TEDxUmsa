@@ -1,0 +1,19 @@
+{
+  "name": "tedxumsa-eventos",
+  "private": true,
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm exec -- prisma generate",
+    "db:migrate": "npm exec -- prisma migrate dev",
+    "db:seed-admin": "npm run seed:admin --workspace=@tedxumsa/api",
+    "db:migrate-halls": "npm run migrate:legacy-halls --workspace=@tedxumsa/api",
+    "db:studio": "npm exec -- prisma studio",
+    "db:test:migrate": "node scripts/migrate-test-db.mjs"
+  },
+  "devDependencies": {
+    "prisma": "^6.5.0",
+    "typescript": "^5.8.2"
+  }
+}
