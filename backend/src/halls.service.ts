@@ -3,7 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Prisma, PrismaClient } from '@prisma/client';
-import sharp from 'sharp';
+
+const sharp = require('sharp') as (
+  input: Buffer,
+  options: { failOn: 'error'; limitInputPixels: number; animated: boolean },
+) => {
+  metadata(): Promise<{ width?: number; height?: number; format?: string }>;
+  stats(): Promise<unknown>;
+};
 
 const imageTypes: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -59,14 +66,24 @@ export class HallsService {
     const bytes = Buffer.from(match[2], 'base64');
     if (bytes.length === 0 || bytes.length > maxImageBytes) throw new BadRequestException('La foto debe pesar hasta 5 MB.');
     let detectedFormat = '';
+    let metadata: Awaited<ReturnType<ReturnType<typeof sharp>['metadata']>>;
+    const image = sharp(bytes, { failOn: 'error', limitInputPixels: 25_000_000, animated: false });
     try {
-      const image = sharp(bytes, { failOn: 'error', limitInputPixels: 25_000_000, animated: false });
-      const metadata = await image.metadata();
-      if (!metadata.width || !metadata.height || metadata.width * metadata.height > 25_000_000) throw new Error('invalid dimensions');
+      metadata = await image.metadata();
+    } catch (error) {
+      console.error('[hall-photo] Sharp no pudo leer los metadatos:', error instanceof Error ? error.message : 'error desconocido');
+      throw new BadRequestException('El servidor no pudo interpretar la imagen. Vuelve a elegirla o guárdala como JPG, PNG o WebP.');
+    }
+    if (!metadata.width || !metadata.height) throw new BadRequestException('La imagen no tiene dimensiones válidas.');
+    if (metadata.width * metadata.height > 25_000_000) {
+      throw new BadRequestException(`La imagen aún supera el límite de dimensiones (${metadata.width} × ${metadata.height}). Vuelve a elegirla para optimizarla.`);
+    }
+    try {
       await image.stats();
       detectedFormat = metadata.format ?? '';
-    } catch {
-      throw new BadRequestException('El archivo no contiene una imagen válida o supera el límite de dimensiones.');
+    } catch (error) {
+      console.error('[hall-photo] Sharp no pudo decodificar el contenido:', error instanceof Error ? error.message : 'error desconocido');
+      throw new BadRequestException('Sharp no pudo decodificar la imagen. Prueba guardarla como JPG o PNG y cargarla de nuevo.');
     }
     const detectedMime = detectedFormat === 'jpeg' ? 'image/jpeg' : detectedFormat === 'png' ? 'image/png' : detectedFormat === 'webp' ? 'image/webp' : '';
     if (detectedMime !== mimeType) {

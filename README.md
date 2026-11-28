@@ -1,81 +1,138 @@
-# TEDxUMSA · Gestión de eventos
+# TEDxUMSA — plataforma de gestión de eventos
 
-Plataforma para publicar eventos, registrar asistentes, asignar butacas y administrar la operación desde un panel privado.
+Aplicación web para publicar eventos TEDxUMSA, recibir inscripciones, asignar butacas y gestionar la operación de cada evento desde un panel administrativo.
 
-## Arquitectura
+## Tecnologías
 
-Proyecto organizado en dos carpetas: `frontend` (Next.js) y `backend` (NestJS, API REST). PostgreSQL con Prisma es la fuente de verdad. La arquitectura, entidades y reglas de concurrencia están en [docs/arquitectura.md](docs/arquitectura.md).
+| Área | Tecnología | Uso |
+| --- | --- | --- |
+| Interfaz web | **Next.js 16**, **React 19** y **TypeScript** | Portada, formularios públicos, mapa de butacas, tickets y paneles. |
+| API | **NestJS 10** y **TypeScript** | API REST, autenticación, validación y reglas de negocio. |
+| Persistencia | **PostgreSQL** | Almacenamiento relacional de cuentas, eventos, salones, butacas e inscripciones. |
+| Acceso a datos | **Prisma 6** | Esquema, cliente tipado y migraciones de base de datos. |
+| Validación | **class-validator** y **class-transformer** | Validación y transformación de los datos recibidos por la API. |
+| Imágenes | **Sharp** | Lectura y validación del contenido, formato y dimensiones de las fotos de salones. |
+| Códigos QR | **qrcode** | Generación del QR incluido en el pase del asistente. |
+| Correo | **Resend** (opcional) | Envío de enlaces de encuestas de satisfacción al cerrar un evento. |
+| Documentación de API | **Swagger** | Exploración de endpoints en `/api/docs` durante el desarrollo. |
 
-## Desarrollo
+El repositorio usa **npm workspaces** para mantener `frontend/` y `backend/` como aplicaciones separadas. El esquema Prisma y los scripts de base de datos viven en la raíz. No se necesita Docker para el desarrollo local.
 
-Requiere Node.js 20+, npm y PostgreSQL instalado localmente para usar el creador de formularios. Docker no es necesario.
+## Funcionalidades
 
-1. Instala e inicia PostgreSQL localmente. En pgAdmin, conectado como `postgres`, abre Query Tool y crea la base:
+- Portada pública con eventos publicados y enlaces de inscripción.
+- Formularios por evento con preguntas configurables por el administrador.
+- Selección de butaca y control de disponibilidad para evitar asignaciones duplicadas.
+- Pase de inscripción con código QR.
+- Gestión de salones reutilizables, incluida la edición de dimensiones, distribución de butacas y fotografía del recinto.
+- Panel administrativo para consultar eventos, inscripciones, respuestas, ocupación y acreditaciones.
+- Escaneo de QR o ingreso de código para registrar la asistencia.
+- Colaboradores asignados a eventos para apoyar las tareas permitidas.
+- Encuesta de satisfacción y métricas de respuestas cuando se configura el servicio de correo.
 
-   ```sql
-   CREATE DATABASE tedxumsa OWNER postgres;
+## Requisitos
+
+- Node.js compatible con Next.js 16 (Node.js 20.9 o posterior recomendado).
+- npm.
+- Una instancia de PostgreSQL accesible desde la máquina.
+
+## Configuración local
+
+1. Clona el repositorio e instala las dependencias desde la carpeta raíz:
+
+   ```powershell
+   git clone https://github.com/Ericka55/TEDxUmsa.git
+   cd TEDxUmsa
+   npm install
    ```
-2. Copia `.env.example` como `.env`; reemplaza `CAMBIA_ESTA_PASSWORD` con la contraseña de PostgreSQL del usuario `postgres`, y cambia también las credenciales del administrador y el secreto JWT. Si la contraseña incluye símbolos como `@`, `:` o `/`, codifícalos para usarlos en la URL.
-3. Instala dependencias: `npm install`.
-4. Genera Prisma y crea el esquema: `npm run db:generate` y `npm run db:migrate -- --name init`.
-5. Crea la cuenta inicial en la tabla `User`: `npm run db:seed-admin`. Este paso toma `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env`, y guarda la contraseña como hash.
-6. Inicia cada aplicación en su propia terminal (consulta los comandos de abajo).
 
-Web: `http://localhost:3000`. API: `http://localhost:3001/api`; Swagger: `/api/docs`.
+2. Crea una base de datos PostgreSQL llamada `tedxumsa`. Configura PostgreSQL con una cuenta de servicio para la aplicación y una cuenta con permisos de migración. No uses la cuenta administradora de PostgreSQL como credencial habitual del servidor.
 
-### Iniciar frontend y backend en terminales separadas
+3. Copia `.env.example` a `.env` y completa sus variables. En particular:
 
-Primero instala las dependencias una vez, desde la raíz del proyecto:
+   - `DATABASE_URL`: conexión de runtime a la base `tedxumsa`.
+   - `DATABASE_MIGRATION_URL`: conexión con permisos para ejecutar migraciones Prisma.
+   - `API_PORT`, `WEB_ORIGIN` y `NEXT_PUBLIC_API_URL`: direcciones locales de la API y de la web.
+   - `ADMIN_EMAIL` y `ADMIN_PASSWORD`: credenciales iniciales del administrador; utiliza una contraseña larga y privada.
+   - `JWT_SECRET`: secreto aleatorio para firmar sesiones; no es la contraseña del administrador.
+   - `RESEND_API_KEY` y `MAIL_FROM`: opcionales, necesarios para enviar encuestas por correo.
+
+   No subas `.env` a GitHub ni compartas sus valores. El archivo `.env.example` sirve como plantilla y no debe contener credenciales reales.
+
+4. Genera el cliente de Prisma y aplica las migraciones:
+
+   ```powershell
+   npm run db:generate
+   npm run db:migrate -- --name init
+   ```
+
+   `DATABASE_URL` y `DATABASE_MIGRATION_URL` deben estar definidas para que Prisma valide el esquema y aplique cambios.
+
+5. Crea la cuenta inicial del administrador:
+
+   ```powershell
+   npm run db:seed-admin
+   ```
+
+   El comando lee `ADMIN_EMAIL` y `ADMIN_PASSWORD` desde `.env` y almacena la contraseña como hash en la tabla de usuarios.
+
+## Ejecutar en desarrollo
+
+Abre dos terminales en la raíz del repositorio.
+
+**Terminal 1 — API NestJS:**
 
 ```powershell
-npm install
-```
-
-Terminal 1, API:
-
-```powershell
-cd C:\Users\HP\Desktop\TEDX\SISTEMA\backend
+cd backend
 npm run dev
 ```
 
-Terminal 2, web:
+**Terminal 2 — aplicación Next.js:**
 
 ```powershell
-cd C:\Users\HP\Desktop\TEDX\SISTEMA\frontend
+cd frontend
 npm run dev
 ```
 
-Deja abiertas las dos terminales mientras uses el sistema. También puedes ejecutar `npm run dev` desde la raíz para arrancar ambas juntas.
+La raíz también ofrece `npm run dev` para iniciar ambos procesos a la vez. Mantén las terminales abiertas mientras trabajas.
 
-La página inicial usa una portada cinematográfica con una fila horizontal de eventos publicados desde la base. El administrador entra a `/admin/forms`, configura el evento, crea el salón y distribuye butacas disponibles, bloqueadas o pasillos, además de elegir qué preguntas mostrar. El sistema publica una URL `/e/<slug>` para compartir; allí el participante selecciona una butaca y completa su inscripción. Las inscripciones concurrentes no pueden confirmar la misma butaca. Cada inscripción devuelve un código único. No se precargan asistentes ficticios.
+- Web: <http://localhost:3000>
+- API: <http://localhost:3001/api>
+- Swagger en desarrollo: <http://localhost:3001/api/docs>
+- Acceso administrativo: <http://localhost:3000/admin/forms>
 
-## Seguridad
+## Estructura del proyecto
 
-El login comprueba cuentas de la tabla `User`; las contraseñas se guardan como hashes scrypt. `ADMIN_EMAIL` y `ADMIN_PASSWORD` solo se usan para crear o restablecer la cuenta inicial con `npm run db:seed-admin`. El JWT vence en ocho horas. No publiques la contraseña de ejemplo. Antes de producción, añade una interfaz para gestionar cuentas, HTTPS, correo verificado y una política de privacidad aprobada.
-
-## QR y control de asistencia
-
-Al inscribirse, cada participante recibe un pase QR descargable con su codigo de confirmacion. El panel `/admin/forms` muestra las inscripciones y el total de asistentes que ya ingresaron; esos datos se actualizan cada cinco segundos. En el panel se puede escanear el QR con la camara o ingresar el codigo manualmente. Un codigo ya utilizado se reconoce como asistencia previamente confirmada.
-
-Si la base de datos ya estaba creada antes de agregar el control de asistencia, detene las terminales de frontend y backend con `Ctrl+C`, vuelve a la raiz y ejecuta una vez:
-
-```powershell
-npm install
-npm run db:migrate
-npm run db:generate
+```text
+backend/                 API NestJS: módulos, controladores, servicios y DTOs
+frontend/                Next.js: páginas públicas y administración
+prisma/schema.prisma     Modelo PostgreSQL y configuración de Prisma
+prisma/migrations/       Historial de migraciones
+docs/                    Arquitectura, auditoría y guías operativas
+scripts/                 Comandos auxiliares de desarrollo y migración
 ```
 
-Luego vuelve a iniciar frontend y backend en sus terminales habituales.
+La interfaz se comunica con la API; no se conecta directamente a PostgreSQL. La API valida las solicitudes y ejecuta las operaciones a través de Prisma.
 
-## Colaboradores y cierre del evento
+## Scripts principales
 
-Desde el dashboard de cada evento, el administrador puede crear colaboradores con correo y contrasena temporal. El colaborador inicia sesion en `http://localhost:3000/colaborador` y vera unicamente los eventos que tiene asignados; desde alli puede abrir el formulario publico para ayudar a completar inscripciones.
+Ejecutados desde la raíz:
 
-Para enviar la encuesta de satisfaccion al terminar un evento, configura `RESEND_API_KEY` y `MAIL_FROM` en `.env`. `MAIL_FROM` debe ser un remitente de un dominio verificado en Resend. Al pulsar **Terminar evento**, las inscripciones se cierran y se envia un enlace unico a cada persona cuyo QR fue acreditado. Los envios pendientes se pueden reintentar desde el dashboard. El resumen muestra promedios, distribucion de calificaciones y comentarios recibidos.
+| Comando | Propósito |
+| --- | --- |
+| `npm run dev` | Inicia frontend y backend en paralelo. |
+| `npm run build` | Compila los workspaces disponibles. |
+| `npm run db:generate` | Genera el cliente de Prisma. |
+| `npm run db:migrate -- --name nombre` | Crea y aplica una migración en desarrollo. |
+| `npm run db:seed-admin` | Crea o actualiza la cuenta inicial del administrador. |
+| `npm run db:studio` | Abre Prisma Studio para inspeccionar la base configurada. |
 
-Para actualizar una base existente con colaboradores y encuestas, detene el backend y ejecuta desde la raiz:
+## Seguridad y despliegue
 
-```powershell
-npm run db:migrate
-npm run db:generate
-```
+- Mantén secretos y cadenas de conexión en variables de entorno del servidor.
+- Usa una cuenta de base de datos de runtime con privilegios limitados y credenciales de migración separadas.
+- Configura HTTPS, dominios permitidos y variables seguras antes de producción.
+- Las fotos de salones se limitan y validan en el navegador y en la API; el backend comprueba el formato real con Sharp.
+- Para desplegar, el frontend, la API y PostgreSQL necesitan configuraciones y variables de entorno compatibles entre sí. La API debe estar disponible mientras se registran asistentes y se acreditan sus códigos QR.
+
+Consulta [docs/arquitectura.md](docs/arquitectura.md) para el modelo y las reglas de datos, [docs/auditoria-tecnica.md](docs/auditoria-tecnica.md) para los hallazgos y verificaciones, y [docs/postgres-cuentas-servicio.md](docs/postgres-cuentas-servicio.md) para la configuración de cuentas PostgreSQL.

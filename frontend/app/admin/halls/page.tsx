@@ -15,6 +15,18 @@ type HallRecord = {
   photoUrl: string | null;
   legacyKey?: string | null;
 };
+type SeatMode = 'AVAILABLE' | 'BLOCKED' | 'AISLE';
+
+function rowLabel(index: number) {
+  let value = index + 1;
+  let label = '';
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
 
 function apiOrigin() { return API.replace(/\/api\/?$/, ''); }
 
@@ -26,6 +38,10 @@ export default function AdminHallsPage() {
   const [editingId, setEditingId] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [photoData, setPhotoData] = useState('');
+  const [seatRows, setSeatRows] = useState(5);
+  const [seatColumns, setSeatColumns] = useState(8);
+  const [seatModes, setSeatModes] = useState<Record<string, SeatMode>>({});
+  const [seatTool, setSeatTool] = useState<'CYCLE' | SeatMode>('CYCLE');
   const [notice, setNotice] = useState('');
   const [eventId, setEventId] = useState('');
 
@@ -60,32 +76,107 @@ export default function AdminHallsPage() {
 
   function newHall() {
     setEditingId(''); setPhotoData(''); setNotice('');
+    setSeatRows(5); setSeatColumns(8); setSeatModes({}); setSeatTool('CYCLE');
     (document.getElementById('hall-form') as HTMLFormElement | null)?.reset();
     setShowForm(true);
   }
 
   function editHall(hall: HallRecord) {
     setEditingId(hall.id); setPhotoData(''); setNotice('');
+    setSeatRows(hall.seatRows); setSeatColumns(hall.seatColumns); setSeatTool('CYCLE');
+    const modes: Record<string, SeatMode> = {};
+    for (let row = 0; row < hall.seatRows; row += 1) for (let column = 0; column < hall.seatColumns; column += 1) {
+      const seat = hall.seatLayout?.find((item) => item.rowOrder === row && item.columnOrder === column);
+      modes[`${row}:${column}`] = !seat && hall.legacyKey ? 'AISLE' : seat?.state === 'AISLE' ? 'AISLE' : seat?.state === 'BLOCKED' || seat?.status === 'BLOCKED' ? 'BLOCKED' : 'AVAILABLE';
+    }
+    setSeatModes(modes);
     window.setTimeout(() => {
       const form = document.getElementById('hall-form') as HTMLFormElement | null;
       if (!form) return;
       (form.elements.namedItem('name') as HTMLInputElement).value = hall.name;
       (form.elements.namedItem('venue') as HTMLInputElement).value = hall.venue;
-      (form.elements.namedItem('seatRows') as HTMLInputElement).value = String(hall.seatRows);
-      (form.elements.namedItem('seatColumns') as HTMLInputElement).value = String(hall.seatColumns);
     }, 0);
     setShowForm(true);
   }
 
-  function selectPhoto(file?: File) {
+  function setSeat(row: number, column: number) {
+    setSeatModes((current) => {
+      const key = `${row}:${column}`;
+      const mode = current[key] ?? 'AVAILABLE';
+      const next: SeatMode = seatTool === 'CYCLE'
+        ? mode === 'AVAILABLE' ? 'BLOCKED' : mode === 'BLOCKED' ? 'AISLE' : 'AVAILABLE'
+        : seatTool;
+      return { ...current, [key]: next };
+    });
+  }
+
+  function markRowAsAisle(row: number) {
+    setSeatModes((current) => {
+      const next = { ...current };
+      for (let column = 0; column < seatColumns; column += 1) next[`${row}:${column}`] = 'AISLE';
+      return next;
+    });
+  }
+
+  function markColumnAsAisle(column: number) {
+    setSeatModes((current) => {
+      const next = { ...current };
+      for (let row = 0; row < seatRows; row += 1) next[`${row}:${column}`] = 'AISLE';
+      return next;
+    });
+  }
+
+  function addCenterAisle() {
+    const center = Math.floor(seatColumns / 2);
+    const columns = seatColumns % 2 === 0 ? [center - 1, center] : [center];
+    setSeatModes((current) => {
+      const next = { ...current };
+      for (let row = 0; row < seatRows; row += 1) for (const column of columns) next[`${row}:${column}`] = 'AISLE';
+      return next;
+    });
+  }
+
+  function clearAisles() {
+    setSeatModes((current) => Object.fromEntries(Object.entries(current).map(([key, mode]) => [key, mode === 'AISLE' ? 'AVAILABLE' : mode])));
+  }
+
+  async function selectPhoto(file?: File) {
     setPhotoData('');
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
-      setNotice('Elige una foto JPG, PNG o WebP de hasta 5 MB.'); return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) {
+      setNotice('Elige una foto JPG, PNG o WebP de hasta 20 MB.'); return;
     }
-    const reader = new FileReader();
-    reader.onload = () => setPhotoData(typeof reader.result === 'string' ? reader.result : '');
-    reader.readAsDataURL(file);
+    setNotice('Optimizando la foto…');
+    let bitmap: ImageBitmap | undefined;
+    try {
+      bitmap = await createImageBitmap(file);
+      const maxPixels = 20_000_000;
+      let scale = Math.min(1, 5000 / Math.max(bitmap.width, bitmap.height), Math.sqrt(maxPixels / (bitmap.width * bitmap.height)));
+      let blob: Blob | null = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.floor(bitmap.height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('No se pudo preparar la foto.');
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.84));
+        if (blob && blob.size <= 4 * 1024 * 1024) break;
+        scale *= 0.82;
+      }
+      if (!blob || blob.size > 4 * 1024 * 1024) throw new Error('La foto optimizada sigue siendo demasiado pesada.');
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPhotoData(typeof reader.result === 'string' ? reader.result : '');
+        setNotice('Foto lista. Se ajustó automáticamente para el mapa del salón.');
+      };
+      reader.onerror = () => setNotice('No se pudo leer la foto. Prueba exportarla como JPG, PNG o WebP.');
+      reader.readAsDataURL(blob);
+    } catch {
+      setNotice('No se pudo procesar la foto. Prueba exportarla como JPG, PNG o WebP.');
+    } finally {
+      bitmap?.close();
+    }
   }
 
   async function saveHall(event: FormEvent<HTMLFormElement>) {
@@ -94,10 +185,11 @@ export default function AdminHallsPage() {
     const form = new FormData(formElement);
     const rows = Number(form.get('seatRows'));
     const columns = Number(form.get('seatColumns'));
-    const existing = halls.find((hall) => hall.id === editingId);
-    const seatLayout = existing && existing.seatRows === rows && existing.seatColumns === columns
-      ? existing.seatLayout
-      : Array.from({ length: rows * columns }, (_, index) => ({ rowOrder: Math.floor(index / columns), columnOrder: index % columns, status: 'AVAILABLE' as const }));
+    const seatLayout = Array.from({ length: rows * columns }, (_, index) => {
+      const rowOrder = Math.floor(index / columns);
+      const columnOrder = index % columns;
+      return { rowOrder, columnOrder, state: seatModes[`${rowOrder}:${columnOrder}`] ?? 'AVAILABLE' };
+    });
     setNotice(editingId ? 'Guardando cambios…' : 'Registrando salón…');
     try {
       const response = await apiFetch(`${API}/halls${editingId ? `/${editingId}` : ''}`, {
@@ -128,8 +220,17 @@ export default function AdminHallsPage() {
         {showForm && <div className="admin-hall-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowForm(false); }}><form id="hall-form" className="admin-hall-form" role="dialog" aria-modal="true" aria-labelledby="hall-form-heading" onSubmit={(event) => void saveHall(event)}><div className="admin-hall-form-title"><div><p>CATÁLOGO DE ESPACIOS</p><h2 id="hall-form-heading">{editingId ? 'EDITAR SALÓN' : 'REGISTRAR SALÓN'}</h2></div><button type="button" onClick={() => setShowForm(false)}>CERRAR</button></div>
             <p className="admin-hall-form-help">Un salón es el recinto físico donde se realiza un evento. Cada evento puede reutilizar uno de estos lugares.</p>
             <label>Nombre del salón<input name="name" placeholder="Auditorio principal" required maxLength={120} /></label><label>Recinto y dirección<input name="venue" placeholder="Teatro, edificio, ciudad" required maxLength={180} /></label>
-            <div className="builder-row"><label>Filas<input name="seatRows" type="number" min="1" max="30" defaultValue="5" required /></label><label>Butacas por fila<input name="seatColumns" type="number" min="1" max="40" defaultValue="8" required /></label></div>
-            <div className="admin-hall-photo-field"><span>FOTOGRAFÍA DEL RECINTO</span>{(photoData || halls.find((hall) => hall.id === editingId)?.photoUrl) && <img src={photoData || `${apiOrigin()}${halls.find((hall) => hall.id === editingId)?.photoUrl}`} alt="Vista previa de la fotografía del salón" />}<label>Elegir foto<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => selectPhoto(event.target.files?.[0])} /><small>JPG, PNG o WebP · hasta 5 MB</small></label></div>
+            <div className="builder-row"><label>Filas<input name="seatRows" type="number" min="1" max="30" value={seatRows} onChange={(event) => setSeatRows(Math.max(1, Math.min(30, Number(event.target.value) || 1)))} required /></label><label>Butacas por fila<input name="seatColumns" type="number" min="1" max="40" value={seatColumns} onChange={(event) => setSeatColumns(Math.max(1, Math.min(40, Number(event.target.value) || 1)))} required /></label></div>
+            <p className="builder-help">Elige una herramienta y pulsa las butacas. Los botones con flechas convierten filas o columnas completas en pasillos.</p>
+            <div className="seat-tools"><div className="seat-tool-modes"><button type="button" className={seatTool === 'CYCLE' ? 'active' : ''} onClick={() => setSeatTool('CYCLE')}>Editar individual</button><button type="button" className={seatTool === 'AVAILABLE' ? 'active' : ''} onClick={() => setSeatTool('AVAILABLE')}>Disponible</button><button type="button" className={seatTool === 'BLOCKED' ? 'active' : ''} onClick={() => setSeatTool('BLOCKED')}>Bloquear</button><button type="button" className={seatTool === 'AISLE' ? 'active' : ''} onClick={() => setSeatTool('AISLE')}>Pasillo</button></div><div className="seat-tool-actions"><button type="button" onClick={addCenterAisle}>Añadir pasillo central</button><button type="button" onClick={clearAisles}>Quitar pasillos</button></div></div>
+            <div className="hall-preview-wrap"><div className="hall-stage">ESCENARIO</div>
+              <div className="hall-preview-column-actions" style={{ gridTemplateColumns: `28px 28px repeat(${seatColumns}, 38px)` }}><span /><span />{Array.from({ length: seatColumns }, (_, column) => <button type="button" key={column} onClick={() => markColumnAsAisle(column)} title={`Convertir toda la columna ${column + 1} en pasillo`} aria-label={`Convertir toda la columna ${column + 1} en pasillo`}>&#8595;</button>)}</div>
+              {Array.from({ length: seatRows }, (_, row) => <div className="hall-preview-row" key={row} style={{ gridTemplateColumns: `28px 28px repeat(${seatColumns}, 38px)` }}><span className="hall-row-label">{rowLabel(row)}</span><button type="button" className="aisle-row-action" onClick={() => markRowAsAisle(row)} title={`Convertir toda la fila ${rowLabel(row)} en pasillo`} aria-label={`Convertir toda la fila ${rowLabel(row)} en pasillo`}>&#8596;</button>
+                {Array.from({ length: seatColumns }, (_, column) => { const mode = seatModes[`${row}:${column}`] ?? 'AVAILABLE'; return <button className={`seat-dot seat-${mode.toLowerCase()}`} type="button" key={column} title={`Fila ${rowLabel(row)}, asiento ${column + 1}: ${mode}`} aria-label={`Fila ${rowLabel(row)}, asiento ${column + 1}: ${mode}`} onClick={() => setSeat(row, column)}>{mode === 'AISLE' ? '·' : column + 1}</button>; })}
+              </div>)}
+            </div>
+            <div className="seat-key"><span><i className="key-available" />Disponible</span><span><i className="key-blocked" />Bloqueada</span><span><i className="key-aisle" />Pasillo</span></div>
+            <div className="admin-hall-photo-field"><span>FOTOGRAFÍA DEL RECINTO</span>{(photoData || halls.find((hall) => hall.id === editingId)?.photoUrl) && <img src={photoData || `${apiOrigin()}${halls.find((hall) => hall.id === editingId)?.photoUrl}`} alt="Vista previa de la fotografía del salón" />}<label>Elegir foto<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectPhoto(event.target.files?.[0])} /><small>JPG, PNG o WebP · hasta 20 MB; se optimiza automáticamente</small></label></div>
             {notice && <p className="admin-hall-notice" role="status">{notice}</p>}<button className="builder-button admin-hall-save">{editingId ? 'GUARDAR CAMBIOS' : 'AGREGAR AL CATÁLOGO'}</button>
           </form></div>}
       </section>
